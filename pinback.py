@@ -1,14 +1,16 @@
 from datetime import date, datetime
+import time
 import re
 import requests
-import waypin
 import json
-import sys
 import logging 
+import sys
+import os
 
-RL_EP="https://robustlinks.mementoweb.org/api/?url={0}&archive={1}"
+RL_EP="https://robustlinks.mementoweb.org/api/?url={0}"
 ARCHIVE_DOMAIN="archive.org"
-PB_EP="https://api.pinboard.in/v1/posts/add?auth_token={0}&url={1}&title={2}&tags={3}"
+PB_EP="https://api.pinboard.in/v1/posts/add?auth_token={0}&url={1}&description={2}&tags={3}&shared='no'"
+TOKEN_STR='PINBOARD_API_TOKEN'
 
 '''
 check that PINBOARD_API_TOKEN is set
@@ -32,79 +34,52 @@ if other ie redirect
 
 
 
-'''
-    {
-      "original_uri": "http://www.cnn.com/",
-      "mementos": {
-        "last": {
-          "datetime": "2014-10-07T18:32:00Z",
-          "uri": [
-            "http://web.archive.org/web/20141007183200/http://www.cnn.com/",
-            "http://wayback.vefsafn.is/wayback/20141007183200/http://www.cnn.com/"
-          ]
-        },
-        "next": {
-          "datetime": "2013-01-15T11:01:01Z",
-          "uri": [
-            "http://web.archive.org/web/20130115110101/http://www.cnn.com/"
-          ]
-        },
-        "closest": {
-          "datetime": "2013-01-15T09:46:43Z",
-          "uri": [
-            "http://web.archive.org/web/20130115094643/http://www.cnn.com/",
-            "http://archive.today/aaqIY"
-          ]
-        },
-        "first": {
-          "datetime": "2000-06-20T18:02:59Z",
-          "uri": [
-            "http://arquivo.pt/wayback/wayback/20000620180259/http://cnn.com/"
-          ]
-        },
-        "prev": {
-          "datetime": "2013-01-15T08:17:14Z",
-          "uri": [
-            "http://web.archive.org/web/20130115081714/http://www.cnn.com/"
-          ]
-        }
-      },
-      "timegate_uri": "http://timetravel.mementoweb.org/timegate/http://www.cnn.com/",
-      "timemap_uri": {
-        "link_format": "http://timetravel.mementoweb.org/timemap/link/http://cnn.com",
-        "json_format": "http://timetravel.mementoweb.org/timemap/json/http://cnn.com"
-      }
-    }
-    '''
-
 """def get_formatted_today() -> date:
     return date.today().strftime('%Y%m%d')
 """
 
-def get_robust_link(site_url:str, archive:str = "archive.org") -> requests.models.Response:
-    robust_url = RL_EP.format(site_url, archive)
-    logging.info("Getting link from Robust Link for {}".format(site_url))
-    return requests.get(robust_url)
-   
-        
+
+
+def get_robust_link(site_url:str) -> requests.models.Response:
+    robust_url = RL_EP.format(site_url)
+    logging.debug("Getting link from Robust Link using {}".format(robust_url))
+    resp = requests.models.Response()
+    sleep_t = 10 
+    attempts = 0
+    while resp.status_code != 200 and attempts < 11:
+        print("Retrieving a link from Robust Link service...This could take quite some time.")
+        attempts += 1 
+        resp = requests.get(robust_url)
+        # this is not unusual; the Archive is very slow, so we wait and retry
+        if resp.status_code == 504 or resp.status_code == 502:
+            logging.warning("Gateway issue. Retrying after {}".format(sleep_t)) 
+            time.sleep(sleep_t)
+            sleep_t *= 1.5
+        # if status is in 400 range, recovery unlikely
+        elif resp.status_code >= 400 and resp.status_code < 500:
+            logging.warn(f"Response status {resp.status_code} unexpected.")
+            break
+    return resp
+
+
 """
     @
 """
 def pin_url(url:str, tags:list, desc:str, token:str) -> requests.models.Response:
     pinboard_url = PB_EP.format(token, url, desc, tags) 
-    logging.info("Pinning {}...".format(url))
+    logging.info("Pinning {}...".format(pinboard_url))
     pb_resp = requests.get(pinboard_url) 
     return pb_resp 
 
 
 """
 """
-def prompt_for_title():
-    title = None 
-    while not title or len(title) > 254:
-        title = input("Provide a description of less than 256 characters for the pin/bookmark: ").strip()
-    logging.debug("User-supplied description: {}".format(title))
-    return title
+def prompt_for_description():
+    desc = None 
+    while not desc or len(desc) > 254:
+        desc = input("Provide a description of less than 256 characters for the pin/bookmark: ").strip()
+    logging.debug("User-supplied description: {}".format(desc))
+    return desc
 
 
 def prompt_for_tags():
@@ -123,16 +98,17 @@ def prompt_for_tags():
 
 
 def main():
-    url, archive = check_args()
+    url = sys.argv[1] #TODO check_args()
+    token = os.environ[TOKEN_STR]
+    if not token:
+        print("Please provide a Pinboard API token. Currently that means setting {} in the environment".format(TOKEN_STR))
+        exit(1) 
     # append the supplied date and archive to the Memento API endpoint location
-    resp = get_robust_link(url, archive)
-    # check for a 2xx status code 
-    if resp.status_code - 200 < 100:
-        tags = prompt_for_tags()
-        pin_url(memento_resp)
-    else:
-        pass#store the url in WBK machine?
-
-
-if __name__ == 'main':
+    resp = get_robust_link(url)
+    desc = prompt_for_description()
+    tags = prompt_for_tags()
+    pin_url(resp, tags, desc, token)
+    
+if __name__ == '__main__':
     main()
+

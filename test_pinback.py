@@ -22,6 +22,10 @@ def test_get_robust_link():
     resp = pinback.get_robust_link(url) 
     assert(resp.status_code == 200)
 
+def test_mementoize_url():
+    url = "https://hackaday.com/2020/07/16/tend-your-garden-again/"
+    resp = pinback.mementoize_url(url)
+    assert resp.status_code == 200
 
 def test_prompt_for_tags(monkeypatch):
     monkeypatch.setattr('sys.stdin', StringIO('tag1,groovy,this fails,asdoesthis ,'))

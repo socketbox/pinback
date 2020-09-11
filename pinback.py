@@ -8,11 +8,11 @@ import argparse
 from pathlib import Path
 import os
 
-RL_EP="https://robustlinks.mementoweb.org/api/?url={0}"
-PB_EP="https://api.pinboard.in/v1/posts/add?auth_token={0}&url={1}&description={2}&tags={3}&shared='no'"
-CFG_SECTION='DEFAULT'
-TOKEN_STR='PINBOARD_API_TOKEN'
-DEF_CFG_PATH='/.config/socketbox/pinback/pinback.cfg'
+RL_EP = "https://robustlinks.mementoweb.org/api/?url={0}"
+PB_EP = "https://api.pinboard.in/v1/posts/add?auth_token={0}&url={1}&description={2}&tags={3}&shared='no'"
+CFG_SECTION = 'PINBOARD'
+TOKEN_STR = 'PINBOARD_API_TOKEN'
+DEF_CFG_PATH = '/.config/socketbox/pinback/pinback.cfg'
 
 '''
 Pseudocode overview:
@@ -37,7 +37,7 @@ if other ie redirect
 '''
 
 
-def get_robust_resp(site_url: str) -> requests.models.Response:
+def get_robust_response(site_url: str) -> requests.models.Response:
     """
 
     :param site_url:
@@ -49,19 +49,21 @@ def get_robust_resp(site_url: str) -> requests.models.Response:
     return resp
 
 
-def parse_robust_response( resp: requests.models.Response) -> tuple:
+def parse_robust_response(resp: requests.models.Response) -> tuple:
     """
 
     :param resp:
     :return:
     """
+    res_dict = {}
     if resp.status_code == 200:
         robust_data = resp.json()
-        res_tuple = (200, robust_data)
+        res_dict['status_code'] = 200
+        res_dict['original_url'] = robust_data.get('original_url')
+
     else:
         res_tuple = (resp.status_code, None)
     return res_tuple
-
 
     """if  resp.status_code == 504 or resp.status_code == 502:
         logging.warning(f"Gateway issue. Retrying after {sleep_t}")
@@ -75,7 +77,6 @@ def parse_robust_response( resp: requests.models.Response) -> tuple:
     """
 
 
-
 def pin_url(url: str, tags: list, desc: str, token: str, share: bool) -> requests.models.Response:
     """
 
@@ -85,14 +86,15 @@ def pin_url(url: str, tags: list, desc: str, token: str, share: bool) -> request
     :param url:
     :type token: object
     """
+    # take the Pinboard URL and add query args
     pinboard_url = PB_EP.format(token, url, desc, tags, share)
     logging.info(f"Pinning {pinboard_url}...")
-    pb_resp = requests.get(pinboard_url) 
-    return pb_resp 
+    pb_resp = requests.get(pinboard_url)
+    return pb_resp
 
 
 def prompt_for_description():
-    desc = None 
+    desc = None
     while not desc or len(desc) > 254:
         desc = input("Provide a description of less than 256 characters for the pin/bookmark: ").strip()
     logging.debug(f"User-supplied description: {desc}")
@@ -100,9 +102,9 @@ def prompt_for_description():
 
 
 def prompt_for_tags():
-    tags_str = None 
+    tags_str = None
     while not tags_str:
-        tags_str = input("Provide a comma-delimited list of tags: ") 
+        tags_str = input("Provide a comma-delimited list of tags: ")
     else:
         logging.debug(f"User-supplied tag string: {tags_str}")
         patt = re.compile(r"^.*\s.*$")
@@ -114,12 +116,9 @@ def prompt_for_tags():
     return valid
 
 
-def parse_args() -> argparse.ArgumentParser:
+def parse_pinback_args(args: list) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Save an archived URL to Pinboard', prog='pinback',
                                      usage='%(prog)s [options] url')
-    parser.add_argument('url', metavar='url', type=str, help='the original URL' +
-                                     '(non-archival URL) you intend to save to pinboard',
-                                    action='store')
     parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('--version', action='version', version='%(prog)s 1.0')
     parser.add_argument('-k', '--token', action='store', help="A pinboard API token")
@@ -128,18 +127,24 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('-d', '--desc', action='store', type=str,
                         help='A description (title) for the Pinboard entry')
     parser.add_argument('-c', '--config', action='store',
-                default=Path.home() + '/.config/socketbox/pinback/pinback.cfg')
-    return parser
+                        default=str(Path.home()) + '/.config/socketbox/pinback/pinback.cfg')
+    parser.add_argument('url', metavar='url', type=str, help='the original URL' +
+                                                             '(non-archival URL) you intend to save to Pinboard',
+                        action='store')
+    return parser.parse_args(args)
 
 
-def parse_config(cfg_file: str) -> dict:
+def parse_config(cfg_file: str) -> configparser.ConfigParser:
     """
+    Pinback uses an INI-style configuration file as explained in Python's configparser
+    documentation. If a path is not supplied by the user with the '-c' or '--config'
+    option, then pinback uses the default of $HOME/.config/socketbox/pinback/pinback.cfg'.
 
-    :param cfg_file:
-    :return:
+    :param cfg_file: a string that represents the absolute path to a configuration file
+    :return: a instance of ConfigParser
     """
     cfgp = configparser.ConfigParser()
-    if not cfg_file:
+    if cfg_file:
         cfgp.read(cfg_file)
     else:
         home = str(Path.home())
@@ -147,36 +152,61 @@ def parse_config(cfg_file: str) -> dict:
     return cfgp
 
 
-def  check_prereqs(argp: argparse.ArgumentParser, cfgp: configparser.ConfigParser):
+def check_prereqs(argp: argparse.ArgumentParser, cfgp: configparser.ConfigParser):
     """
+    Intended to ensure that the Pinboard API token is available. First, the
+    configuration file is checked, then the command-line arguments, and finally
+    the runtime environment is checked.
 
+    Priority is given to the command-line argument, then the configuration file.
+    If neither exists, then the Pinboard token is gotten from the runtime
+    environment.
     :param argp:
     :param cfgp:
     :return:
     """
-    if TOKEN_STR not in os.environ:
+    token = cfgp[CFG_SECTION][TOKEN_STR]
+    if not token or argp.token:
         token = argp.token
     if not token:
-        token = cfgp[CFG_SECTION][TOKEN_STR]
-    if not token:
-        raise ValueError("No Pinboard API token supplied. Exiting.")
+        if token := os.getenv(TOKEN_STR) is None:
+            raise ValueError("No Pinboard API token supplied. Exiting.")
     return token
 
 
+def _merge_configs(arg_ns: argparse.Namespace, cfg: configparser.ConfigParser) -> dict:
+    """
+    Transforms the config. object into a flat dictionary, then merges it with the
+    argument parser namespace
+
+    :return a unified dictionary of configuration KV pairs
+    """
+    cfg_d, uni_d = {}
+    for s in cfg.sections():
+        for k, v in cfg.items(s):
+           cfg_d[k] = v
+    # merge the cfg dict with the argparser Namespace using PEP 408 syntax
+    uni_d = {**cfg_d, **(vars(arg_ns))}
+    return uni_d
+
+
 def main():
-    arg_ns = parse_args()
-    cfg_parser = parse_config(arg_ns.config)
+    # TODO merge two "configuration namespaces" into a single dictionary
+    #  rather than treat separately
+    arg_ns = parse_pinback_args(sys.argv)
+    parsed_cfg = parse_config(arg_ns.config)
+    uni_cfg = _merge_configs(arg_ns, parsed_cfg)
     try:
-        token = check_prereqs(cfg_parser, arg_ns)
+        token = check_prereqs(arg_ns, parsed_cfg)
     except ValueError as ve:
         logging.error(ve)
         sys.exit(1)
     if arg_ns.verbose == 1:
-        logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
+        logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     elif arg_ns.verbose > 1:
-        logging.basicConfig(level=logging.DEBUG, stream=sys.stdout, force=True)
-    
-    resp = get_robust_resp(arg_ns.url)
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
+
+    resp = get_robust_response(arg_ns.url)
     rob_url = parse_robust_response(resp)
     if desc := arg_ns.desc is None:
         desc = prompt_for_description()
@@ -189,4 +219,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

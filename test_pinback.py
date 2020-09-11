@@ -1,3 +1,4 @@
+from unittest.mock import Mock
 import configparser
 import argparse
 import logging
@@ -9,10 +10,17 @@ from io import StringIO
 from requests import Response
 import pinback
 
+
 @pytest.fixture
-def fake_argparser():
-    ap = argparse.ArgumentParser()
-    ap.add_argument()
+def fake_args():
+    desc = 'This is the description'
+    token = 'foo:123456789ABDEF'
+    tags = 'my little lamb goes to the market'
+    url = 'https://www.example.com/birth.html'
+    args = ["-vv", "-k", token, "-d", desc, url, "-t"]
+    args.extend(tags.split())
+    return args
+
 
 def test_get_robust_response():
     url = "https://peacesupplies.org"
@@ -34,27 +42,20 @@ def test_parse_robust_resp():
           "original_url_as_href": "<a href=\"https://abcnews.go.com\"\ndata-versionurl=\"https://archive.li/wip/hWZdd\"\ndata-versiondate=\"2020-06-15\">https://abcnews.go.com</a>"
       }
     }'''
-    resp = Response()
+    resp = Mock(spec=Response)
     resp.status_code = 200
-    resp.__content__ = json_resp
-    resp.json(json_resp)
-    url = "https://peacesupplies.org"
-    resp = pinback.parse_robust_response()
-    assert (resp.status_code == 200)
+    resp.return_value = json_resp
+    # url = "https://peacesupplies.org"
+    parsed_resp = pinback.parse_robust_response(resp)
+    assert (parsed_resp['status_code'] == 200)
 
 
-def test_parse_pinback_args():
-    desc = 'This is the description'
-    token = 'foo:123456789ABDEF'
-    tags = 'my little lamb goes to the market'
-    url = 'https://www.example.com/birth.html'
-    args = ["-vv", "-k", token, "-d", desc, url, "-t"]
-    args.extend(tags.split())
-    parser = pinback.parse_pinback_args(args)
+def test_parse_pinback_args(fake_args):
+    parser = pinback.parse_pinback_args(fake_args)
     assert(parser.verbose == 2)
-    assert(parser.desc == desc)
+    assert(parser.desc == fake_args[4])
     assert(len(parser.tags) == 7)
-    assert(parser.url == url)
+    assert(parser.url == fake_args[5])
 
 
 def test_parse_config():
@@ -70,15 +71,14 @@ def test_parse_config():
     assert(cfg['DEFAULT']['PINBOARD_API_TOKEN'] == 'fooschnickens:FDEC3459Q')
 
 
-def test_check_prereqs():
+@pytest.mark.dependency(depends=[test_parse_pinback_args])
+def test_check_prereqs(fake_args):
     """
     Check if config is overridden by command-line arguments
     """
-    args = argparse.ArgumentParser()
-    args.add_argument('-k', '--token', action='store', help="A pinboard API token")
-    ns = args.parse_args(['-k', 'argparsetokenvalue'])
+    ns = pinback.parse_pinback_args(fake_args)
     cfg = configparser.ConfigParser()
-    cfg['DEFAULT'] = {'PINBOARD_API_TOKEN': 'configtokenvalue'}
+    cfg['PINBOARD'] = {'PINBOARD_API_TOKEN': 'configtokenvalue'}
     tkn = pinback.check_prereqs(ns, cfg)
     assert(tkn == ns.token)
 
@@ -116,6 +116,6 @@ def test_pin_url():
     tags = ["foo", "bar", "baz"]
     desc = "Test description."
     logging.debug("Calling pin_url with: {}, {}, {}, {}".format(url, tags, desc, shared))
-    resp = pinback.pin_url(url, tags, desc, token)
+    resp = pinback.pin_url(url, tags, desc, token, shared)
     logging.debug("pinboard response: {}".format(resp.text))
     assert (resp != None and resp.status_code == 200)

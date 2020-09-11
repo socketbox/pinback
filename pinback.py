@@ -49,32 +49,19 @@ def get_robust_response(site_url: str) -> requests.models.Response:
     return resp
 
 
-def parse_robust_response(resp: requests.models.Response) -> tuple:
+def parse_robust_response(resp: requests.models.Response) -> dict:
     """
 
     :param resp:
     :return:
     """
-    res_dict = {}
-    if resp.status_code == 200:
-        robust_data = resp.json()
-        res_dict['status_code'] = 200
-        res_dict['original_url'] = robust_data.get('original_url')
+    assert(resp.status_code == 200)
+    json = resp.json()
+    res_dict = {
+        'robust_url': json['version_url'],
+        'orig_url': json['data-originalurl']}
+    return res_dict
 
-    else:
-        res_tuple = (resp.status_code, None)
-    return res_tuple
-
-    """if  resp.status_code == 504 or resp.status_code == 502:
-        logging.warning(f"Gateway issue. Retrying after {sleep_t}")
-        time.sleep(sleep_t)
-        sleep_t *= 1.5
-    # if status is in 400 range, recovery unlikely
-    elif 400 <= resp.status_code < 500:
-        logging.warning(f"Response status {resp.status_code} unexpected.")
-        break
-    return resp
-    """
 
 
 def pin_url(url: str, tags: list, desc: str, token: str, share: bool) -> requests.models.Response:
@@ -195,7 +182,7 @@ def main():
     #  rather than treat separately
     arg_ns = parse_pinback_args(sys.argv)
     parsed_cfg = parse_config(arg_ns.config)
-    uni_cfg = _merge_configs(arg_ns, parsed_cfg)
+    # uni_cfg = _merge_configs(arg_ns, parsed_cfg)
     try:
         token = check_prereqs(arg_ns, parsed_cfg)
     except ValueError as ve:
@@ -206,15 +193,28 @@ def main():
     elif arg_ns.verbose > 1:
         logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
-    resp = get_robust_response(arg_ns.url)
-    rob_url = parse_robust_response(resp)
+    sleep_t = 2
+    # if the service returned a good response, proceed
+    while (resp := get_robust_response(arg_ns.url).status_code != 200 and
+        sleep_t < 60):
+        # potentially transient failure
+        if  resp.status_code == 504 or resp.status_code == 502:
+            logging.warning(f'Gateway issue. Retrying after {sleep_t}')
+            time.sleep(sleep_t)
+            sleep_t *= 1.5
+        # if status is in 400 range, recovery unlikely
+        elif 400 <= resp.status_code < 500:
+            logging.warning(f"Response status {resp.status_code} unexpected.")
+            sys.exit(1)
+
+    parsed_resp = parse_robust_response(resp)
     if desc := arg_ns.desc is None:
         desc = prompt_for_description()
     if tags := arg_ns.tags is None:
         tags = prompt_for_tags()
     if not tags or not desc:
         logging.warning("Pinning without ")
-    pin_url(rob_url, tags, desc, token)
+    pin_url(parsed_resp, parsed_resp['robust_url'], tags, desc, token, arg_ns.shared)
 
 
 if __name__ == '__main__':

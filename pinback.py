@@ -9,32 +9,34 @@ import argparse
 from pathlib import Path
 import os
 
+
 RL_EP = "https://robustlinks.mementoweb.org/api/?url={0}"
 CFG_SECTION = 'PINBOARD'
 TOKEN_STR = 'PINBOARD_API_TOKEN'
 DEF_CFG_PATH = '/.config/socketbox/pinback/pinback.cfg'
+INIT_SLEEP = 2
+MAX_SLEEP = 60
+SLEEP_FACTOR = 1.5
 
 
-def get_resource(url: str, **payload) -> requests.Response:
+def get_resource(url: str, sleep: int, factor: int, max_sleep: int, **payload) -> requests.Response:
     """
-    Get a resource from a potentially problematic service by retrying periodically
-    for up to a minute.
+    Get a resource from a potentially problematic service by retrying periodically.
 
+    :param sleep: seconds to sleep
+    :param max_sleep: number of seconds of sleep not to be exceeded in an iteration
+    :param factor: factor by which sleep time is increased every iteration
     :param url: the resource desired
     :return: an HTTP response
     """
-    # Note that, for idempotent operations, like the initial
-    # retrieving of metadata for the resource, this isn't an issue.
     # Might be a good idea to verify that, at least for Pinboard, a 50x status
     # code precludes the creation of a bookmark
-    sleep_t = 2
-    # we try nine times for a cumulative max of 150s
-    while (resp := requests.get(url, params=payload)).status_code != 200 and sleep_t < 60:
+    while (resp := requests.get(url, params=payload)).status_code != 200 and sleep < max_sleep:
         # potentially transient failure
         if resp.status_code == 504 or resp.status_code == 502:
-            logging.warning(f'Gateway issue. Retrying after {sleep_t}')
-            time.sleep(sleep_t)
-            sleep_t *= 1.5
+            logging.warning(f'Gateway issue. Retrying after {sleep}')
+            time.sleep(sleep)
+            sleep *= factor
         # if status is in 400 range, recovery unlikely
         elif 400 <= resp.status_code < 500:
             logging.warning(f"Response status {resp.status_code} unexpected.")
@@ -48,7 +50,7 @@ def get_original_metadata(url: str) -> dict:
     :return: a dict containing the title and description of the resource
     """
     logging.debug(f'Retrieving metadata from {url}')
-    resp = get_resource(url)
+    resp = get_resource(url, INIT_SLEEP, SLEEP_FACTOR, MAX_SLEEP)
     if resp.status_code == 200:
         soup = BeautifulSoup(resp.content, 'html.parser')
         meta_d = {'status_code': resp.status_code,
@@ -69,7 +71,7 @@ def get_robust_response(site_url: str) -> requests.models.Response:
     """
     robust_url = RL_EP.format(site_url)
     logging.info("Getting link from Robust Link using {}".format(robust_url))
-    resp = get_resource(robust_url)
+    resp = get_resource(robust_url, INIT_SLEEP, SLEEP_FACTOR, MAX_SLEEP)
     return resp
 
 
@@ -194,6 +196,7 @@ def parse_pinback_args() -> argparse.Namespace:
                         help="Publicly Share the bookmark on Pinboard")
     parser.add_argument('-r', '--read', action='store_true', default=False, help="Mark bookmark as unread")
     parser.add_argument('-p', '--replace', action='store_true', default=True, help="Replace bookmark with similar URL")
+    parser.add_argument('-f', '--file', action='store_true', default=False, help="Process a file of bookmarks")
     parser.add_argument('-g', '--tags', action='extend', nargs='+', type=str,
                         help='A space-delimited list of tags for Pinboard')
     parser.add_argument('-d', '--desc', action='store', type=str, help='A description for the Pinboard entry')
@@ -291,6 +294,14 @@ def main():
         logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     elif arg_ns.verbose > 1:
         logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
+
+    # TODO: mulitprocessing ... or not
+    if arg_ns.file:
+        from multiprocessing import Pool
+        with open(arg_ns.file) as f:
+            # read lines
+        with Pool(8) as p:
+            pass
 
     md = get_original_metadata(arg_ns.url)
     resp = get_robust_response(arg_ns.url)

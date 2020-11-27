@@ -138,7 +138,6 @@ def test_pin_url():
     assert (resp is not None and resp.status_code == 200)
 
 
-@pytest.mark.skip('need to reimplement this test')
 def test_get_resource(monkeypatch):
     def mock_get(*args, **kwargs):
         resp = requests.Response()
@@ -149,9 +148,9 @@ def test_get_resource(monkeypatch):
     url = "https://example.com/index.html"
     # there has to be a better way to test the loop and backoff
     start = time.monotonic()
-    resp = pinback.get_resource(url)
+    resp = pinback.get_resource(url, 2, 1.5, 5)
     end = time.monotonic()
-    assert (149 < end - start < 155)
+    assert (9 < end - start < 10)
 
 
 def test_get_original_metadata():

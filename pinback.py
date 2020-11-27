@@ -186,7 +186,7 @@ def parse_pinback_args() -> argparse.Namespace:
     :return: a Namespace resulting from the parsing of command-line arguments
     """
     parser = argparse.ArgumentParser(description='Archive a URL and save it to Pinboard', prog='pinback',
-                                     usage='%(prog)s [options] url')
+                                     usage='%(prog)s [options] url\nUse --help for help on options')
     parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('--version', action='version', version='%(prog)s 1.0')
     parser.add_argument('-k', '--token', action='store', help="A pinboard API token")
